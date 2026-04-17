@@ -2,9 +2,7 @@
 
 **GraphQL Operation Harvester for Burp Suite**
 
-Author: Aghora
-License: MIT
-
+Author: A9hora
 ---
 
 ## What is Grapher?
@@ -32,13 +30,13 @@ The extension is completely passive. It never modifies, replays, or injects into
 
 Grapher registers an HTTP handler and a WebSocket handler in Burp Suite. As you browse the target application through Burp's proxy, Grapher inspects every request and response:
 
-**HTTP requests** are checked for GraphQL POST bodies (`{"query":"..."}`) and GET parameters (`?query=...`). The JSON body is parsed to extract the operation type, name, variables, and any persisted query hashes. This runs inline in the request handler since it's fast string matching.
+**HTTP requests** are checked for GraphQL POST bodies and GET parameters. The JSON body is parsed to extract the operation type, name, variables, and any persisted query hashes. This runs inline in the request handler since it's fast string matching.
 
-**HTTP responses** with JavaScript content types are passed to a background thread where Grapher runs regex-based extraction against the full JS content. It looks for `gql` tagged template literals, `JSON.stringify({query:"..."})` patterns, Relay compiled module nodes (`{kind:"Request",name:"...",id:"..."}`), and Meta's `queryID`/`doc_id` fields. The background thread prevents large JS bundles from blocking Burp's UI.
+**HTTP responses** with JavaScript content types are passed to a background thread where Grapher runs regex-based extraction against the full JS content. It looks for template literals, common patterns, Relay compiled module nodes (`{kind:"Request",name:"...",id:"..."}`), and Meta's `queryID`/`doc_id` fields. The background thread prevents large JS bundles from blocking Burp's UI.
 
 **WebSocket messages** sent from client to server are checked for GraphQL payloads using the `graphql-ws` and `subscriptions-transport-ws` message formats.
 
-Every extracted operation is deduplicated by endpoint, operation name, operation type, and persisted hash. Duplicates from different sources (for example, the same query appearing in both an HTTP POST and a JS bundle) are merged into a single entry.
+The same operation discovered from different sources (for example, an HTTP POST to /graphql and a JS file at /static/app.js) appears as separate entries because they carry different context — the HTTP entry has the real request with auth headers, while the JS entry shows where in the codebase the operation lives. Operations from the same source and endpoint are deduplicated to prevent table flooding during active testing.
 
 When you right-click a finding and choose "Send to Repeater," Grapher constructs a proper GraphQL POST request using a real endpoint it observed during your browsing session. The constructed request carries the correct Host header, cookies, authorization tokens, and any custom headers the target expects — because it copies them from a real request template. For `doc_id` operations, the request body uses `{"doc_id":"..."}` format instead of `{"query":"..."}`.
 
@@ -58,7 +56,9 @@ Clone the repository and build with Gradle:
 ```bash
 git clone https://github.com/YOUR_USERNAME/Grapher.git
 cd Grapher
-./gradlew jar
+./gradlew jar 
+OR
+gradle build jar
 ```
 
 On Windows:
@@ -105,7 +105,7 @@ No additional configuration is needed. Grapher starts capturing immediately.
 
 7. **Export CSV** saves all captured operations to a CSV file for reporting or archival. **Import CSV** reloads a previously exported file, so you can resume testing across Burp sessions without re-browsing.
 
-8. **Export .graphql** generates an inferred SDL schema from all captured operations. Import this file into [GraphQL Voyager](https://graphql-kit.com/graphql-voyager/) to visualize the API's type structure as an interactive graph — without needing introspection access.
+8. **Export .graphql** generates an inferred SDL schema from all captured operations. Import this file into [GraphQL Voyager](https://apis.guru/graphql-voyager/) to visualize the API's type structure as an interactive graph — without needing introspection access.
 
 ### What Grapher Captures
 
@@ -168,7 +168,3 @@ GrapherExtension.java       — Entry point: registers handlers, tab, unload hoo
 - **Output**: Single uber JAR with no runtime dependencies
 
 ---
-
-## License
-
-MIT

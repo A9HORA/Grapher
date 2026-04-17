@@ -391,7 +391,7 @@ public class GrapherExtension implements BurpExtension, ExtensionUnloadingHandle
         // Parse $varName: Type pairs
         StringBuilder vars = new StringBuilder("{");
         java.util.regex.Matcher m = java.util.regex.Pattern.compile(
-                "\\$([A-Za-z_]\\w*)\\s*:\\s*([^,)]+)").matcher(varBlock);
+                "\\$([A-Za-z_]\\w*)\\s*:\\s*([^$,)]+)").matcher(varBlock);
         boolean first = true;
         while (m.find()) {
             String varName = m.group(1);

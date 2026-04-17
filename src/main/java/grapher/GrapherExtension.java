@@ -352,14 +352,86 @@ public class GrapherExtension implements BurpExtension, ExtensionUnloadingHandle
                     .replace("\r", "\\r")
                     .replace("\t", "\\t");
 
+            // Extract variable placeholders from the operation signature
+            String variablesJson = buildVariablePlaceholders(operationBody);
+
             if (operationName != null && !operationName.isEmpty() && !operationName.equals("anonymous")) {
-                jsonBody = "{\"query\":\"" + escapedBody + "\",\"operationName\":\"" + operationName + "\",\"variables\":{}}";
+                jsonBody = "{\"query\":\"" + escapedBody + "\",\"operationName\":\"" + operationName + "\",\"variables\":" + variablesJson + "}";
             } else {
-                jsonBody = "{\"query\":\"" + escapedBody + "\",\"variables\":{}}";
+                jsonBody = "{\"query\":\"" + escapedBody + "\",\"variables\":" + variablesJson + "}";
             }
         }
 
-        return HttpRequest.httpRequest(template.httpService(), buildRawRequest(template, jsonBody));
+        return HttpRequest.httpRequest(template.httpService(),
+                buildRawRequest(template, jsonBody, operationName));
+    }
+
+    /**
+     * Extract variable names and types from the operation signature and build
+     * a JSON variables object with placeholder values.
+     *
+     * Input:  "query Foo($id: ID!, $name: String, $count: Int)"
+     * Output: {"id":"<ID>","name":"<String>","count":"<Int>"}
+     *
+     * This gives the tester a ready-to-fill template in Repeater instead of
+     * an empty {} that requires reading the query to know what variables exist.
+     */
+    private String buildVariablePlaceholders(String operationBody) {
+        // Find the variable declaration block: (...) before the first {
+        int bracePos = operationBody.indexOf('{');
+        if (bracePos < 0) return "{}";
+
+        String header = operationBody.substring(0, bracePos);
+        int parenStart = header.indexOf('(');
+        int parenEnd = header.lastIndexOf(')');
+        if (parenStart < 0 || parenEnd < 0 || parenEnd <= parenStart) return "{}";
+
+        String varBlock = header.substring(parenStart + 1, parenEnd);
+
+        // Parse $varName: Type pairs
+        StringBuilder vars = new StringBuilder("{");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "\\$([A-Za-z_]\\w*)\\s*:\\s*([^,)]+)").matcher(varBlock);
+        boolean first = true;
+        while (m.find()) {
+            String varName = m.group(1);
+            String varType = m.group(2).trim().replaceAll("[,\\s]+$", "");
+
+            if (!first) vars.append(",");
+            first = false;
+
+            // Generate appropriate placeholder based on type
+            String placeholder = getPlaceholderForType(varType);
+            vars.append("\"").append(varName).append("\":").append(placeholder);
+        }
+        vars.append("}");
+
+        return vars.toString();
+    }
+
+    /**
+     * Return a JSON placeholder value appropriate for the GraphQL type.
+     */
+    private String getPlaceholderForType(String type) {
+        // Strip non-null marker and list brackets for base type check
+        String base = type.replace("!", "").replace("[", "").replace("]", "").trim();
+
+        switch (base) {
+            case "Int":
+                return "0";
+            case "Float":
+                return "0.0";
+            case "Boolean":
+                return "false";
+            case "String":
+                return "\"\"";
+            case "ID":
+                return "\"\"";
+            default:
+                // Complex input types get an empty object placeholder
+                // The tester will need to fill in the fields
+                return "{}";
+        }
     }
 
     private String buildDocIdBody(String docId, String operationName) {
@@ -372,9 +444,22 @@ public class GrapherExtension implements BurpExtension, ExtensionUnloadingHandle
         return sb.toString();
     }
 
-    private String buildRawRequest(HttpRequest template, String jsonBody) {
+    /**
+     * Build a raw HTTP request using the template's headers and the new body.
+     * Updates the gqlOp query parameter in the URL to match the operation being sent.
+     */
+    private String buildRawRequest(HttpRequest template, String jsonBody, String operationName) {
+        // Get the template path and update gqlOp parameter if present
+        String path = template.path();
+        if (operationName != null && !operationName.isEmpty() && !operationName.equals("anonymous")) {
+            // Replace existing gqlOp parameter value
+            if (path.contains("gqlOp=")) {
+                path = path.replaceFirst("gqlOp=[^&]*", "gqlOp=" + operationName);
+            }
+        }
+
         StringBuilder raw = new StringBuilder();
-        raw.append("POST ").append(template.path()).append(" HTTP/1.1\r\n");
+        raw.append("POST ").append(path).append(" HTTP/1.1\r\n");
 
         var headers = template.headers();
         boolean hasContentType = false;

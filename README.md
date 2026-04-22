@@ -8,39 +8,39 @@
 
 Modern web applications increasingly use GraphQL APIs, but discovering the full attack surface is difficult — operations are scattered across HTTP POST bodies, minified JavaScript bundles, WebSocket connections, and persisted query systems. Introspection is often disabled in production, leaving pentesters blind to what queries and mutations the application actually supports.
 
-Grapher solves this by passively monitoring all traffic flowing through Burp Suite and automatically extracting every GraphQL operation it can find. It pulls operations from live HTTP requests, parses them out of compiled JavaScript bundles (including heavily minified Webpack/Rollup output), captures WebSocket-based subscriptions, and detects persisted query IDs used by Apollo, Relay, and Meta's platforms. Everything appears in a single sortable, filterable table inside Burp — no introspection required.
+Grapher solves this by passively monitoring all traffic flowing through Burp Suite and automatically extracting every GraphQL operation it can find — from live HTTP requests, compiled JavaScript bundles, WebSocket subscriptions, and persisted query systems. Everything appears in a single sortable, filterable table inside Burp. No introspection required.
 
-The extension is completely passive. It never modifies, replays, or injects into any request or response. It observes traffic, extracts operations, and presents them for the tester to act on.
+The extension is completely passive. It never modifies, replays, or injects into any request or response.
 
 ---
 
 ## Key Features
 
 * **Automatic operation extraction** from HTTP POST/GET bodies, JavaScript files, minified bundles, and WebSocket messages
-* **Execute JS Bundles** — runs captured JavaScript files through a sandboxed Node.js VM with static variable resolution to discover dynamically assembled GraphQL operations that regex-based parsing can't reconstruct (requires Node.js)
-* **Inline fragment detection** — captures standalone inline fragments (`... on TypeName { ... }`) stored as JS variables, common in apps that dynamically assemble queries via `.concat()` or template literals
-* **Meta/Relay doc_id support** — captures `doc_id`, `queryId`, and `document_id` persisted operations used by Facebook, Instagram, and Relay-based applications
-* **Send to Repeater / Intruder** — right-click any discovered operation to send it directly to Burp's testing tools with correct authentication headers, endpoint, and variable placeholders
-* **Smart variable placeholders** — constructs ready-to-fill variable templates based on the operation signature (`String!` → `""`, `Int` → `0`, `Boolean` → `false`, complex types → `{}`), supporting both comma-separated and space-separated variable declarations
-* **Inferred schema export** — generates a `.graphql` SDL file from all captured operations, ready to import into GraphQL Voyager for visual API mapping
-* **CSV export and import** — save your findings and reload them in a future session without re-browsing the target
-* **No external dependencies** — pure Java, zero third-party libraries, single self-contained JAR
+* **Execute JS Bundles** — runs captured JavaScript files through a sandboxed Node.js environment to discover dynamically assembled operations that static parsing can't reconstruct (requires Node.js)
+* **Inline fragment detection** — captures standalone inline fragments (`... on TypeName { ... }`) stored as JS variables
+* **Meta/Relay support** — captures `doc_id`, `queryId`, and `document_id` persisted operations
+* **Send to Repeater / Intruder** — right-click any operation to send it with correct authentication, endpoint, and variable placeholders
+* **Smart variable placeholders** — generates ready-to-fill variable templates from the operation signature
+* **Schema export** — generates a `.graphql` SDL file for use with GraphQL Voyager
+* **CSV export and import** — save and reload findings across sessions
+* **Zero dependencies** — pure Java, single self-contained JAR
 
 ---
 
 ## How It Works
 
-Grapher registers an HTTP handler and a WebSocket handler in Burp Suite. As you browse the target application through Burp's proxy, Grapher inspects every request and response:
+Grapher registers handlers in Burp Suite that inspect traffic as you browse:
 
-**HTTP requests** are checked for GraphQL POST bodies and GET parameters. The JSON body is parsed to extract the operation type, name, variables, and any persisted query hashes. This runs inline in the request handler since it's fast string matching.
+**HTTP requests** are checked for GraphQL POST bodies and GET parameters, extracting operation types, names, variables, and persisted query hashes.
 
-**HTTP responses** with JavaScript content types are passed to a background thread where Grapher runs regex-based extraction against the full JS content. It looks for template literals, property assignments, compact operations, Relay compiled module nodes (`{kind:"Request",name:"...",id:"..."}`), and Meta's `queryID`/`doc_id` fields. The background thread prevents large JS bundles from blocking Burp's UI.
+**HTTP responses** containing JavaScript are parsed in a background thread to extract embedded GraphQL operations from compiled JS bundles.
 
-**WebSocket messages** sent from client to server are checked for GraphQL payloads using the `graphql-ws` and `subscriptions-transport-ws` message formats.
+**WebSocket messages** are checked for GraphQL subscription payloads.
 
-The same operation discovered from different sources (for example, an HTTP POST to /graphql and a JS file at /static/app.js) appears as separate entries because they carry different context — the HTTP entry has the real request with auth headers, while the JS entry shows where in the codebase the operation lives. Operations from the same source and endpoint are deduplicated to prevent table flooding during active testing.
+Operations discovered from different sources appear as separate entries — an HTTP POST entry has the real request with auth headers, while a JS entry shows where in the codebase the operation lives. Duplicate operations from the same source and endpoint are merged.
 
-When you right-click a finding and choose "Send to Repeater," Grapher constructs a proper GraphQL POST request using a real endpoint it observed during your browsing session. The constructed request carries the correct Host header, cookies, authorization tokens, and any custom headers the target expects — because it copies them from a real request template. The `gqlOp=` URL parameter is automatically updated to match the operation being sent. For `doc_id` operations, the request body uses `{"doc_id":"..."}` format instead of `{"query":"..."}`.
+When you send a finding to Repeater, Grapher constructs a proper GraphQL POST request using a real endpoint it observed during your session, carrying the correct headers, cookies, and authentication tokens.
 
 ---
 
@@ -49,12 +49,10 @@ When you right-click a finding and choose "Send to Repeater," Grapher constructs
 ### Prerequisites
 
 * Burp Suite Professional or Community Edition
-* Java 17 or later (bundled with Burp Suite 2024+)
-* Node.js v16+ (optional — only needed for the "Execute JS Bundles" feature)
+* Java 17+ (bundled with Burp Suite 2024+)
+* Node.js v16+ (optional — only for "Execute JS Bundles")
 
-### Building from Source
-
-Clone the repository and build with Gradle:
+### Build
 
 ```
 git clone https://github.com/A9HORA/Grapher.git
@@ -62,159 +60,91 @@ cd Grapher
 ./gradlew jar
 ```
 
-On Windows:
+On Windows: `gradlew.bat jar`
 
-```
-gradlew.bat jar
-```
+Output: `build/libs/Grapher-1.0.0.jar`
 
-The compiled JAR is produced at `build/libs/Grapher-1.0.0.jar`.
+### Install
 
-If you don't have the Gradle wrapper, install Gradle 8+ and run `gradle jar`.
+1. Burp Suite → **Extensions** → **Add**
+2. Type: **Java**
+3. Select `Grapher-1.0.0.jar`
 
-### Installing in Burp Suite
-
-1. Open Burp Suite
-2. Go to **Extensions** → **Installed**
-3. Click **Add**
-4. Set extension type to **Java**
-5. Select `build/libs/Grapher-1.0.0.jar`
-6. A new **Grapher** tab appears in the Burp Suite top bar
-
-No additional configuration is needed. Grapher starts capturing immediately.
+Grapher starts capturing immediately.
 
 ---
 
 ## Usage Guide
 
-### Basic Workflow
+### Capture
 
-1. **Browse the target** through Burp's proxy as you normally would. Grapher captures operations in the background — no extra steps needed.
-2. **Open the Grapher tab** to see all captured operations in a table. Each row shows the endpoint, HTTP method, source (HTTP POST, JS file, WebSocket, etc.), operation type (query/mutation/subscription), operation name, and the full operation body.
-3. **Click any row** to see the full operation detail in the bottom pane, including the complete query body, the URL it was found in, and how it would be sent to the server.
-4. **Filter results** using the Source and Type dropdowns in the toolbar. For example, filter by "mutation" to see only write operations, or by "Minified/Obfuscated JS" to see operations that were hidden in compiled JavaScript.
+Browse the target through Burp's proxy as you normally would. Grapher captures operations in the background. Open the **Grapher** tab to see results.
 
-### Testing Operations
+### Filter
 
-5. **Right-click any operation** → **Send to Repeater** to test it. Grapher constructs a ready-to-send GraphQL POST request with the correct endpoint, authentication, headers, and variable placeholders from your browsing session. Modify variables, strip fields, or alter the query directly in Repeater to test for authorization bypass, IDOR, or field-level access control issues.
-6. **Right-click** → **Send to Intruder** to set up automated testing with Burp's Intruder tool.
+Use the Source and Type dropdowns to narrow results — filter by "mutation" to see write operations, or by source to see what came from JS bundles vs live traffic.
 
-### Execute JS Bundles (Node.js)
+### Test
 
-7. **Click "Execute JS Bundles"** in the toolbar to run captured JavaScript files through a two-stage analysis pipeline that discovers dynamically assembled GraphQL operations.
+Right-click any operation → **Send to Repeater**. Grapher constructs a ready-to-send request with the correct endpoint, headers, cookies, and variable placeholders. Modify variables, strip fields, or alter the query to test for authorization bypass, IDOR, or field-level access control issues.
 
-   **Stage 1 — Static Variable Resolution** (preprocesses raw JS source text):
-   - Scans the JS source for string variable assignments (`var y = "... on RecentSearchHotel { ... }"`, `let query = "query Foo { ... }"`, `const FRAGMENT = "..."`)
-   - Builds a variable name → string value map
-   - Finds GraphQL base query strings with `.concat()` chains and resolves each argument:
-     - String literal `"..."` → used directly
-     - Variable reference `y` → substituted from the map
-     - Ternary `cond ? y : ""` → empty fallback means additive fragment, `y` is included
-     - Ternary `cond ? varA : varB` → both non-empty, both emitted as separate operations
-   - Captures standalone GraphQL fragments from the variable map
+Right-click → **Send to Intruder** for automated testing.
 
-   **Stage 2 — Sandboxed VM Execution** (runs the bundle in an isolated context):
-   - Executes the bundle with intercepted `JSON.stringify()` and `fetch()` calls
-   - Triggers Webpack chunk callbacks to execute module factories
-   - Scans all Webpack module exports for GraphQL strings after execution
+### Execute JS Bundles
 
-   Results from both stages are merged and deduplicated. The companion Node.js script (`grapher-executor.js`) is bundled inside the JAR and extracted at runtime.
+Click **Execute JS Bundles** to run captured JavaScript files through Node.js. This reconstructs operations that are dynamically assembled at runtime — queries built using variable references, string concatenation, and conditional expressions that static parsing can't resolve.
 
-   **Node.js path discovery**: Grapher automatically searches common installation paths (`/usr/local/bin/node`, `/opt/homebrew/bin/node`, `~/.nvm/`, etc.) since Burp's JRE does not inherit the user's shell PATH. If auto-discovery fails, a file chooser dialog lets you manually locate the `node` binary.
+The feature resolves variable assignments in the source code, reconstructs concatenation chains, and handles conditional branches (including both sides of ternary expressions). It also executes the bundle in a sandboxed environment to capture operations that are assembled through runtime logic.
 
-   **Security**: The sandbox has no access to the real file system, network, `process`, or `require`. The JS file is read outside the sandbox by trusted code; the untrusted bundle runs inside the sandbox with only fake browser globals. A 10-second VM timeout kills runaway execution.
+Grapher searches common Node.js paths automatically. If not found, a file browser lets you locate it manually.
 
-### Exporting Results
+### Export
 
-8. **Export CSV** saves all captured operations to a CSV file for reporting or archival. **Import CSV** reloads a previously exported file, so you can resume testing across Burp sessions without re-browsing.
-9. **Export .graphql** generates an inferred SDL schema from all captured operations. Import this file into [GraphQL Voyager](https://apis.guru/graphql-voyager/) to visualize the API's type structure as an interactive graph — without needing introspection access.
+* **Export CSV** — save all findings for reporting or reloading later
+* **Import CSV** — reload a previously exported session
+* **Export .graphql** — generate an inferred schema for [GraphQL Voyager](https://apis.guru/graphql-voyager/)
 
-### What Grapher Captures
+---
 
-| Source | Examples |
+## What Grapher Captures
+
+| Source | Description |
 | --- | --- |
-| HTTP POST Body | `{"query":"query GetUser($id:ID!){user(id:$id){name email}}","variables":{"id":"123"}}` |
-| HTTP GET Params | `?query=query+GetUser{user{name}}&extensions={"persistedQuery":{"sha256Hash":"abc..."}}` |
-| JS/Static Files | `` gql`query GetUser { user { name } }` ``  embedded in React/Angular/Vue bundles |
-| Minified JS | `a.b="query GetUser{user{name}}"` in Webpack/Rollup compiled output |
-| WebSocket | `{"type":"subscribe","payload":{"query":"subscription OnMessage{newMessage{id text}}"}}` |
-| Meta/Relay doc_id | `{"doc_id":"1234567890","variables":{},"operationName":"GetUser"}` |
-| JS Executed (Node.js) | Dynamically assembled operations captured via variable resolution and sandboxed JS execution |
+| HTTP POST/GET | GraphQL operations from live API requests |
+| JS/Static Files | Operations embedded in JavaScript bundles |
+| Minified JS | Operations in obfuscated bundler output |
+| WebSocket | Real-time subscription messages |
+| Meta/Relay doc_id | Persisted query identifiers |
+| JS Executed | Dynamically assembled operations captured via Node.js execution |
 
-### Detected Operation Types
+### Operation Types
 
 | Type | Color | Meaning |
 | --- | --- | --- |
 | query | Blue | Read operations |
 | mutation | Red | Write operations — high-value targets for testing |
-| subscription | Green | Real-time WebSocket subscriptions |
-| fragment | Purple | Reusable fragment definitions and inline fragments (`... on TypeName`) |
-| persisted | Orange | Apollo APQ sha256 hashes |
+| subscription | Green | Real-time subscriptions |
+| fragment | Purple | Reusable fragment definitions and inline fragments |
+| persisted | Orange | Persisted query hashes |
 | doc_id | Dark Blue | Relay/Meta persisted document IDs |
 
 ---
 
-## Technical Details
+## BApp Store Compliance
 
-### Architecture
-
-```
-GrapherExtension.java         — Entry point: registers handlers, tab, unload hook
-├── GqlHttpHandler             — HTTP handler: parses POST bodies, GET params
-│   └── Background thread      — JS parsing offloaded to a daemon thread
-├── GqlWebSocketCreatedHandler — WebSocket handler: monitors subscription messages
-├── GraphQLParser.java         — Stateless regex-based parser (15+ patterns)
-├── GraphQLEntry.java          — Immutable data model with builder pattern
-├── GraphQLTableModel.java     — Thread-safe JTable model with dedup and body upgrade
-├── GraphQLPanel.java          — Swing UI: table, filters, detail pane, context menu, JS execution
-├── SchemaInferrer.java        — Walks captured operations, builds merged SDL
-└── grapher-executor.js        — Node.js two-stage analysis script (bundled as JAR resource)
-```
-
-### Detection Pipeline
-
-Grapher uses multiple extraction strategies optimized for different content types:
-
-**HTTP POST/GET**: `JSON_QUERY_FIELD` regex with possessive quantifiers extracts the `"query"` field from JSON bodies. Persisted hashes are matched via `PERSISTED_HASH` and `PERSISTED_HASH_ALT` patterns. Relay/Meta doc_ids are matched via `JSON_DOC_ID`, `JSON_QUERY_ID`, and `JSON_DOCUMENT_ID` patterns.
-
-**JS files**: Two-pass extraction — `parseJsContent` handles clean patterns (gql tagged templates, raw operation declarations) while `parseMinifiedJsContent` handles obfuscated patterns (property assignments, escaped strings, compact operations, object literal query fields, AST body fields, Relay compiled text, and Apollo-style hex IDs). All extracted content is sanitized via `cleanJsArtifacts` which strips JS operators, template syntax, `.concat()` calls, and ternary expressions.
-
-**Compact operations**: `MINIFIED_COMPACT_OP` detects tightly packed operations like `query Foo{bar{id}}`, then `extractBalancedOp` walks nested braces for correct extraction. Region is capped at 50K chars to prevent performance issues on large files.
-
-**Inline fragments**: `MINIFIED_PROP_ASSIGN` matches variable assignments containing inline fragments (`var y = "... on TypeName { ... }"`). `parseQueryString` detects bodies starting with `...` and creates fragment entries with the type name.
-
-**Variable placeholders**: `buildVariablePlaceholders` parses the operation signature to generate type-appropriate placeholders. The variable regex `[^$,)]+` correctly handles both comma-separated (`$a: String!, $b: Int`) and space-separated (`$a: String! $b: Int`) variable declarations.
-
-**JS execution**: The `grapher-executor.js` script uses a two-stage approach — static variable resolution on the raw source text followed by sandboxed VM execution with intercepted `JSON.stringify` and `fetch()` calls. Variable resolution builds a name → value map from string assignments, then resolves `.concat()` chains and ternary expressions to reconstruct full queries. The sandbox executes Webpack module factories and scans exports for GraphQL strings.
-
-### Regex Safety
-
-All string-matching patterns use possessive quantifiers (`*+`, `++`, `[^}]*+`) to prevent catastrophic backtracking on large inputs. The `cleanJsArtifacts` character-level sanitizer walks the string once without backtracking. JS files over 5MB are skipped entirely via `MAX_JS_SIZE`. The background JS parser thread catches `Throwable` (not just `Exception`) to survive `StackOverflowError` from deeply nested content.
-
-### BApp Store Compliance
-
-* **Threading**: JS parsing runs in a background daemon thread, never in HttpHandler callbacks. The Swing EDT is only used for UI updates via `SwingUtilities.invokeLater`.
-* **Unload**: Implements `ExtensionUnloadingHandler`. On unload, the background thread pool is terminated and all data structures are cleared.
-* **Thread safety**: All access to the shared entries list is synchronized on a dedicated lock object.
-* **Large projects**: `HttpRequestResponse` objects are stored via `copyToTempFile()` to prevent unbounded memory growth.
-* **GUI parenting**: All popup dialogs (`JOptionPane`, `JFileChooser`) are parented to `SwingUtils.suiteFrame()` for correct multi-monitor behavior.
-* **Networking**: No outbound HTTP requests. The "Execute JS Bundles" feature runs a local Node.js process — it does not make any network calls.
-* **Offline**: No online service dependencies. Everything runs locally.
-* **Dependencies**: Zero external dependencies. Pure JDK 17 + Montoya API 2026.2.
-* **Passive only**: Never modifies, injects, replays, or alters any request or response.
-
-### Build Configuration
-
-* **Build tool**: Gradle
-* **API artifact**: `net.portswigger.burp.extensions:montoya-api:2026.2`
-* **Java**: 17 (source and target compatibility)
-* **Output**: Single uber JAR with no runtime dependencies (the `grapher-executor.js` script is bundled as a JAR resource)
+* Passive only — never modifies any traffic
+* Background threading for JS parsing
+* Clean unload with resource cleanup
+* Thread-safe data structures
+* Memory-safe storage for large projects
+* No outbound network requests
+* No external dependencies
+* Fully offline — no online service dependencies
 
 ---
 
 ## Known Limitations
 
-* **Cross-module query assembly**: Operations where the query string is assembled across multiple Webpack modules (module A imports a string from module B) cannot be resolved by static variable resolution, which only tracks variables within the same file scope. The sandbox execution stage may capture these if the module factories execute successfully.
-* **Inferred schema types**: Fields in the exported `.graphql` schema show as `Unknown` type because only introspection reveals return types. The schema is useful for field discovery and structure mapping, not as a type-complete definition.
-* **Imported CSV entries**: Operations loaded via CSV import have null request/response data. Send to Repeater uses the constructed request path with a discovered endpoint template.
-* **Node.js requirement**: The "Execute JS Bundles" feature requires Node.js v16+ installed on the host machine. If Node.js is not found, Grapher continues to work with regex-based extraction only.
+* Operations assembled across multiple JavaScript chunk files may not be fully reconstructed — browse the target to trigger them and Grapher captures the complete operation from the HTTP request
+* Exported schema field types show as `Unknown` — only introspection reveals return types
+* Execute JS Bundles requires Node.js v16+ on the host machine

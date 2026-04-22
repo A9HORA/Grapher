@@ -17,7 +17,7 @@ The extension is completely passive. It never modifies, replays, or injects into
 ## Key Features
 
 * **Automatic operation extraction** from HTTP POST/GET bodies, JavaScript files, minified bundles, and WebSocket messages
-* **Execute JS Bundles** — runs captured JavaScript files through a sandboxed Node.js VM to discover dynamically assembled GraphQL operations that regex-based parsing can't reconstruct (requires Node.js)
+* **Execute JS Bundles** — runs captured JavaScript files through a sandboxed Node.js VM with static variable resolution to discover dynamically assembled GraphQL operations that regex-based parsing can't reconstruct (requires Node.js)
 * **Inline fragment detection** — captures standalone inline fragments (`... on TypeName { ... }`) stored as JS variables, common in apps that dynamically assemble queries via `.concat()` or template literals
 * **Meta/Relay doc_id support** — captures `doc_id`, `queryId`, and `document_id` persisted operations used by Facebook, Instagram, and Relay-based applications
 * **Send to Repeater / Intruder** — right-click any discovered operation to send it directly to Burp's testing tools with correct authentication headers, endpoint, and variable placeholders
@@ -101,19 +101,28 @@ No additional configuration is needed. Grapher starts capturing immediately.
 
 ### Execute JS Bundles (Node.js)
 
-7. **Click "Execute JS Bundles"** in the toolbar to run captured JavaScript files through a sandboxed Node.js VM. This discovers dynamically assembled GraphQL operations that regex-based static parsing can't reconstruct — for example, queries built at runtime using `.concat()`, ternary expressions, or variable references.
+7. **Click "Execute JS Bundles"** in the toolbar to run captured JavaScript files through a two-stage analysis pipeline that discovers dynamically assembled GraphQL operations.
 
-   The feature works as follows:
-   - Grapher extracts a companion Node.js script (`grapher-executor.js`) from the JAR
-   - For each captured JS file with a response body, it saves the body to a temp file
-   - Runs `node grapher-executor.js <temp_file>` in a sandboxed `vm.createContext()` environment
-   - The sandbox intercepts `JSON.stringify()` and `fetch()` calls to capture assembled GraphQL operations
-   - After execution, it scans all Webpack module exports for GraphQL strings
-   - Captured operations appear in the table with source "JS Executed (Node.js)"
+   **Stage 1 — Static Variable Resolution** (preprocesses raw JS source text):
+   - Scans the JS source for string variable assignments (`var y = "... on RecentSearchHotel { ... }"`, `let query = "query Foo { ... }"`, `const FRAGMENT = "..."`)
+   - Builds a variable name → string value map
+   - Finds GraphQL base query strings with `.concat()` chains and resolves each argument:
+     - String literal `"..."` → used directly
+     - Variable reference `y` → substituted from the map
+     - Ternary `cond ? y : ""` → empty fallback means additive fragment, `y` is included
+     - Ternary `cond ? varA : varB` → both non-empty, both emitted as separate operations
+   - Captures standalone GraphQL fragments from the variable map
 
-   **Node.js path discovery**: Grapher automatically searches common Node.js installation paths (`/usr/local/bin/node`, `/opt/homebrew/bin/node`, `~/.nvm/`, etc.) since Burp's JRE does not inherit the user's shell PATH. If auto-discovery fails, a file chooser dialog lets you manually locate the `node` binary.
+   **Stage 2 — Sandboxed VM Execution** (runs the bundle in an isolated context):
+   - Executes the bundle with intercepted `JSON.stringify()` and `fetch()` calls
+   - Triggers Webpack chunk callbacks to execute module factories
+   - Scans all Webpack module exports for GraphQL strings after execution
 
-   **Security**: The sandbox has no access to the real file system, network, `process`, or `require`. The JS file is read **outside** the sandbox by trusted code; the untrusted bundle runs **inside** the sandbox with only fake browser globals. A 10-second VM timeout kills runaway execution.
+   Results from both stages are merged and deduplicated. The companion Node.js script (`grapher-executor.js`) is bundled inside the JAR and extracted at runtime.
+
+   **Node.js path discovery**: Grapher automatically searches common installation paths (`/usr/local/bin/node`, `/opt/homebrew/bin/node`, `~/.nvm/`, etc.) since Burp's JRE does not inherit the user's shell PATH. If auto-discovery fails, a file chooser dialog lets you manually locate the `node` binary.
+
+   **Security**: The sandbox has no access to the real file system, network, `process`, or `require`. The JS file is read outside the sandbox by trusted code; the untrusted bundle runs inside the sandbox with only fake browser globals. A 10-second VM timeout kills runaway execution.
 
 ### Exporting Results
 
@@ -130,7 +139,7 @@ No additional configuration is needed. Grapher starts capturing immediately.
 | Minified JS | `a.b="query GetUser{user{name}}"` in Webpack/Rollup compiled output |
 | WebSocket | `{"type":"subscribe","payload":{"query":"subscription OnMessage{newMessage{id text}}"}}` |
 | Meta/Relay doc_id | `{"doc_id":"1234567890","variables":{},"operationName":"GetUser"}` |
-| JS Executed (Node.js) | Dynamically assembled operations captured via sandboxed JS execution |
+| JS Executed (Node.js) | Dynamically assembled operations captured via variable resolution and sandboxed JS execution |
 
 ### Detected Operation Types
 
@@ -159,7 +168,7 @@ GrapherExtension.java         — Entry point: registers handlers, tab, unload h
 ├── GraphQLTableModel.java     — Thread-safe JTable model with dedup and body upgrade
 ├── GraphQLPanel.java          — Swing UI: table, filters, detail pane, context menu, JS execution
 ├── SchemaInferrer.java        — Walks captured operations, builds merged SDL
-└── grapher-executor.js        — Node.js sandbox script (bundled as JAR resource)
+└── grapher-executor.js        — Node.js two-stage analysis script (bundled as JAR resource)
 ```
 
 ### Detection Pipeline
@@ -175,6 +184,8 @@ Grapher uses multiple extraction strategies optimized for different content type
 **Inline fragments**: `MINIFIED_PROP_ASSIGN` matches variable assignments containing inline fragments (`var y = "... on TypeName { ... }"`). `parseQueryString` detects bodies starting with `...` and creates fragment entries with the type name.
 
 **Variable placeholders**: `buildVariablePlaceholders` parses the operation signature to generate type-appropriate placeholders. The variable regex `[^$,)]+` correctly handles both comma-separated (`$a: String!, $b: Int`) and space-separated (`$a: String! $b: Int`) variable declarations.
+
+**JS execution**: The `grapher-executor.js` script uses a two-stage approach — static variable resolution on the raw source text followed by sandboxed VM execution with intercepted `JSON.stringify` and `fetch()` calls. Variable resolution builds a name → value map from string assignments, then resolves `.concat()` chains and ternary expressions to reconstruct full queries. The sandbox executes Webpack module factories and scans exports for GraphQL strings.
 
 ### Regex Safety
 
@@ -203,7 +214,7 @@ All string-matching patterns use possessive quantifiers (`*+`, `++`, `[^}]*+`) t
 
 ## Known Limitations
 
-* **Dynamically assembled queries**: Operations built at runtime through JS variable references and ternary expressions (e.g., `.concat(condition ? fragmentVar : "")`) cannot be fully reconstructed by regex. The "Execute JS Bundles" feature addresses this for cases where Webpack module factories execute the assembly code, but operations gated behind React hook lifecycles or user actions may not be captured.
+* **Cross-module query assembly**: Operations where the query string is assembled across multiple Webpack modules (module A imports a string from module B) cannot be resolved by static variable resolution, which only tracks variables within the same file scope. The sandbox execution stage may capture these if the module factories execute successfully.
 * **Inferred schema types**: Fields in the exported `.graphql` schema show as `Unknown` type because only introspection reveals return types. The schema is useful for field discovery and structure mapping, not as a type-complete definition.
 * **Imported CSV entries**: Operations loaded via CSV import have null request/response data. Send to Repeater uses the constructed request path with a discovered endpoint template.
 * **Node.js requirement**: The "Execute JS Bundles" feature requires Node.js v16+ installed on the host machine. If Node.js is not found, Grapher continues to work with regex-based extraction only.

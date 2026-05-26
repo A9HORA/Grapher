@@ -129,7 +129,7 @@ Click **Execute JS Bundles** for deeper extraction. Grapher runs captured JavaSc
 
 ### 6. Export
 - **Export CSV** — deduplicated, merged operations for reporting
-- **Export .graphql** — inferred SDL schema for GraphQL Voyager visualization
+- **Export .graphql** — inferred SDL schema for [GraphQL Voyager visualization](https://apis.guru/graphql-voyager/)
 - **Import CSV** — reload findings from a previous session
 
 ---

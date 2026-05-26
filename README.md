@@ -10,7 +10,7 @@ A Burp Suite extension that passively harvests every GraphQL operation from your
 
 ## The Problem
 
-You're testing a GraphQL API. Introspection is disabled. You have no schema. The only way to find operations is to click through the app and hope you trigger them all — but you won't. Mutations hide behind checkout flows you can't reach. Queries live in JS bundles the browser loaded but never executed. Persisted query IDs fly past in requests you didn't notice. The attack surface is invisible.
+You're testing a GraphQL API. Introspection is disabled. You have no schema. The only way to find operations is to click through the app and hope you trigger them all — but you won't. Mutations hide behind workflows you haven't explored. Queries live in JS bundles the browser loaded but never executed. Persisted query IDs fly past in requests you didn't notice. The attack surface is invisible.
 
 Existing tools don't solve this:
 
@@ -32,7 +32,7 @@ Grapher captures operations from **six different sources** simultaneously:
 |------|--------------------------|----------------------|
 | **Live API requests** | Most tools see these | Captured automatically with full auth context |
 | **JS/Static bundles** | Ignored by other tools | Parsed from compiled Webpack, Rollup, and Vite output |
-| **Dynamically assembled queries** | Invisible to all tools | Resolved from variable references and string concatenation chains in JS |
+| **Dynamically assembled queries** | Invisible to all tools | Resolved when built from string variables and concatenation chains in JS |
 | **WebSocket subscriptions** | Ignored by other tools | Captured from `graphql-ws` and subscription transport messages |
 | **Persisted query hashes** | Ignored by other tools | Apollo APQ sha256 hashes and Relay/Meta doc_id captured |
 | **Minified/obfuscated code** | Ignored by other tools | Extracted from production builds where operation names are mangled |
@@ -50,7 +50,7 @@ Grapher never sends a single request. It reads traffic flowing through Burp's pr
 Modern web apps compile their GraphQL operations into JavaScript bundles during the build process. These bundles contain every query and mutation the app can send — including operations behind features you haven't triggered, admin endpoints you can't reach, and authenticated flows you haven't explored. Grapher extracts them all.
 
 ### Dynamic Query Reconstruction
-Some applications assemble GraphQL queries at runtime from fragments stored in separate variables. Other tools see broken pieces. Grapher resolves variable references, follows concatenation chains, and reconstructs the complete operation — even when the query was split across multiple code locations in a minified bundle.
+Some applications assemble GraphQL queries at runtime from fragments stored in separate variables. Other tools see broken pieces. Grapher resolves variable references, follows concatenation chains, and reconstructs the complete operation within the same JavaScript file. Queries that are computed through runtime logic — such as loops, array methods, or cross-module imports — are captured from live traffic when the browser executes them.
 
 ### Execute JS Bundles
 For operations that resist static analysis, Grapher can execute captured JavaScript files in a sandboxed Node.js environment. The sandbox intercepts GraphQL operations as they're assembled at runtime, capturing queries that only exist in memory during execution. No network access, no file system access — just operation capture.
@@ -139,7 +139,7 @@ Click **Execute JS Bundles** for deeper extraction. Grapher runs captured JavaSc
 On a typical modern web application using GraphQL:
 
 - **Manual browsing** captures 5-10 operations from HTTP POST traffic
-- **Grapher** discovers 20-30+ operations from the same session — including mutations behind checkout flows, admin queries in shared bundles, authenticated variants with additional parameters, and subscription endpoints
+- **Grapher** discovers significantly more operations from the same session — including mutations behind protected workflows, admin queries in shared bundles, authenticated variants with additional parameters, and subscription endpoints
 - Operations found only in JS bundles often reveal **additional fields, alternative resolvers, and undocumented parameters** not visible in the live traffic
 
 Every additional operation is a potential authorization bypass, IDOR, or injection point that would have been invisible without Grapher.
@@ -164,13 +164,13 @@ Every additional operation is a potential authorization bypass, IDOR, or injecti
 No. Grapher discovers operations from traffic analysis, not from the server's schema. It works on targets where introspection is completely disabled.
 
 **Does it work with Apollo, Relay, urql, and other GraphQL clients?**
-Yes. Grapher detects GraphQL operations regardless of which client library the application uses. It captures from Apollo, Relay, urql, graphql-request, TanStack Query, and any other client that sends standard GraphQL requests.
+Yes. Grapher captures operations from any GraphQL client that sends standard query requests — including Apollo, Relay, urql, graphql-request, TanStack Query, and others. Clients that generate queries dynamically at runtime (such as gqty) are supported through live traffic capture when the browser executes the query.
 
 **Does it modify any requests or responses?**
 No. Grapher is entirely passive. It only reads traffic — it never injects, modifies, or replays anything.
 
 **What about operations built at runtime using dynamic JavaScript?**
-Grapher resolves variable references and reconstructs dynamically assembled queries from JS bundles. For operations that resist static analysis, the Execute JS Bundles feature runs the code in a sandboxed environment to capture runtime-assembled queries.
+Grapher resolves variable references and string concatenation chains to reconstruct dynamically assembled queries from JS bundles. For operations that resist static analysis, the Execute JS Bundles feature runs the code in a sandboxed environment to capture additional operations. Queries built through runtime computation — such as loops or conditional logic based on user state — are captured from live traffic when the browser sends them.
 
 **Can I use it alongside InQL or other GraphQL extensions?**
 Yes. Grapher focuses on discovery. InQL and others focus on testing. They complement each other — use Grapher to find the full attack surface, then use other tools to test it.
